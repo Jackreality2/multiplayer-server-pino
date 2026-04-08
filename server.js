@@ -23,7 +23,7 @@ function spawnFood(n) {
     } 
 }
 
-// Gerar Buracos Negros
+// Gerar Buracos Negros (+50 de massa)
 function spawnBH(n) { 
     for(let i=0; i<n; i++) {
         blackHoles.push({
@@ -34,11 +34,11 @@ function spawnBH(n) {
     } 
 }
 
-// Inicialização
-spawnFood(400); 
-spawnBH(15);
+// Inicialização da Arena
+spawnFood(450); 
+spawnBH(18);
 
-console.log(`Servidor rodando na porta ${PORT}`);
+console.log(`Servidor de PinoCobrinhas Pro rodando na porta ${PORT}`);
 
 io.on('connection', (socket) => {
     
@@ -54,7 +54,7 @@ io.on('connection', (socket) => {
             nameColor: userData.nameColor || "white"
         };
         
-        // Envia para todos o aviso de que alguém entrou (para o log de eventos)
+        // Emite para o log de eventos no PHP
         io.emit('playerJoined', players[socket.id].name);
     });
 
@@ -62,44 +62,52 @@ io.on('connection', (socket) => {
         const p = players[socket.id];
         if(!p) return;
 
+        // Velocidade base que diminui conforme a massa aumenta
         const speed = Math.max(1.5, 5 - (p.size / 50));
         p.x += Math.cos(angle) * speed; 
         p.y += Math.sin(angle) * speed;
 
-        // Limites do mapa
+        // Colisão com as bordas do mapa
         p.x = Math.max(0, Math.min(MAP_SIZE, p.x)); 
         p.y = Math.max(0, Math.min(MAP_SIZE, p.y));
 
-        // Colisão com Comida
+        // 1. Colisão com Comida Comum
         for(let i = foods.length - 1; i >= 0; i--) {
             if(Math.hypot(p.x - foods[i].x, p.y - foods[i].y) < p.size) { 
-                p.size += 0.2; 
+                p.size += 0.22; // Ganho de massa por comida
                 foods.splice(i, 1); 
                 spawnFood(1); 
             }
         }
 
-        // Colisão com Buracos Negros (+50 massa)
+        // 2. Colisão com Buracos Negros (Aquele que te faz crescer rápido)
         for(let i = blackHoles.length - 1; i >= 0; i--) {
             if(Math.hypot(p.x - blackHoles[i].x, p.y - blackHoles[i].y) < p.size + 15) { 
-                p.size += 50; 
+                p.size += 50; // Bônus gigante
                 blackHoles.splice(i, 1); 
+                // Renasce em outro lugar após 5 segundos
                 setTimeout(() => spawnBH(1), 5000); 
             }
         }
 
-        // Colisão entre Jogadores (Comer)
-        Object.values(players).forEach(enemy => {
+        // 3. Colisão entre Jogadores (Comer e Morrer)
+        const allPlayers = Object.values(players);
+        for(let i = 0; i < allPlayers.length; i++) {
+            const enemy = allPlayers[i];
             if(enemy.id !== socket.id) {
                 let dist = Math.hypot(p.x - enemy.x, p.y - enemy.y);
-                // Se estiver perto e for 10% maior
+                
+                // Critério para comer: Estar em cima e ser 10% maior
                 if(dist < p.size && p.size > enemy.size * 1.1) {
-                    p.size += enemy.size * 0.5; 
-                    io.to(enemy.id).emit('die'); // Manda o evento de morte pro inimigo
+                    p.size += enemy.size * 0.45; 
+                    
+                    // ENVIA O COMANDO PARA O JOGADOR MORRER (Isso ativa sua janela de morte no PHP)
+                    io.to(enemy.id).emit('die'); 
+                    
                     delete players[enemy.id];
                 }
             }
-        });
+        }
     });
 
     socket.on('disconnect', () => {
@@ -107,7 +115,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// Envia o estado do jogo para todos (Ranking e Posições)
+// Envia o estado completo (Posições, Ranking e Objetos) a cada 15ms
 setInterval(() => {
     io.emit('tick', { players, foods, blackHoles });
 }, 15);
