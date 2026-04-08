@@ -1,9 +1,8 @@
-// O Railway define a porta automaticamente, por isso usamos process.env.PORT
 const PORT = process.env.PORT || 3000;
 
 const io = require('socket.io')(PORT, {
     cors: {
-        origin: "*", // Permite que o InfinityFree se conecte
+        origin: "*", 
         methods: ["GET", "POST"]
     }
 });
@@ -23,7 +22,6 @@ function spawnFood(amount = 1) {
     }
 }
 
-// Inicializa a comida
 spawnFood(300);
 
 console.log(`Servidor de PinoCobrinhas rodando na porta ${PORT}`);
@@ -42,29 +40,41 @@ io.on('connection', (socket) => {
         };
     });
 
-    socket.on('updatePos', (data) => {
-        if (players[socket.id]) {
-            players[socket.id].x = data.x;
-            players[socket.id].y = data.y;
+    // SISTEMA DE MOVIMENTO SUAVE (Calculado no Servidor)
+    socket.on('move', (angle) => {
+        const p = players[socket.id];
+        if (p) {
+            // Velocidade base que diminui conforme o tamanho (massa)
+            const speed = Math.max(1.5, 5 - (p.size / 50));
             
-            // Lógica de colisão com comida
+            // Calcula a nova posição baseada no ângulo enviado pelo mouse
+            p.x += Math.cos(angle) * speed;
+            p.y += Math.sin(angle) * speed;
+
+            // Impede o jogador de sair das bordas do mapa
+            p.x = Math.max(0, Math.min(MAP_SIZE, p.x));
+            p.y = Math.max(0, Math.min(MAP_SIZE, p.y));
+            
+            // --- Lógica de Colisões dentro do processamento de movimento ---
+            
+            // Colisão com Comida
             for (let i = foods.length - 1; i >= 0; i--) {
                 let f = foods[i];
-                let dist = Math.hypot(players[socket.id].x - f.x, players[socket.id].y - f.y);
-                if (dist < players[socket.id].size) {
-                    players[socket.id].size += 0.2;
+                let dist = Math.hypot(p.x - f.x, p.y - f.y);
+                if (dist < p.size) {
+                    p.size += 0.2;
                     foods.splice(i, 1);
                     spawnFood(1);
                 }
             }
 
-            // Lógica de comer outros jogadores
+            // Colisão com outros Jogadores
             Object.values(players).forEach(enemy => {
                 if (enemy.id !== socket.id) {
-                    let dist = Math.hypot(players[socket.id].x - enemy.x, players[socket.id].y - enemy.y);
-                    // Regra: ser 10% maior para comer
-                    if (dist < players[socket.id].size && players[socket.id].size > enemy.size * 1.1) {
-                        players[socket.id].size += enemy.size * 0.5;
+                    let dist = Math.hypot(p.x - enemy.x, p.y - enemy.y);
+                    // Regra: ser 10% maior para comer o outro
+                    if (dist < p.size && p.size > enemy.size * 1.1) {
+                        p.size += enemy.size * 0.5;
                         io.to(enemy.id).emit('die');
                         delete players[enemy.id];
                     }
@@ -79,7 +89,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// Envia atualizações para todos os clientes a cada 30ms
+// Envia o estado do jogo para todos os jogadores (33 vezes por segundo)
 setInterval(() => {
     io.emit('tick', { players, foods });
 }, 30);
