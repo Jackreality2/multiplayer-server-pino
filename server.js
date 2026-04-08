@@ -1,5 +1,4 @@
 const PORT = process.env.PORT || 3000;
-
 const io = require('socket.io')(PORT, {
     cors: {
         origin: "*", 
@@ -9,8 +8,10 @@ const io = require('socket.io')(PORT, {
 
 let players = {};
 let foods = [];
+let blackHoles = []; // Lista de Buracos Negros
 const MAP_SIZE = 5000;
 
+// Função para gerar comida comum
 function spawnFood(amount = 1) {
     for (let i = 0; i < amount; i++) {
         foods.push({
@@ -22,12 +23,26 @@ function spawnFood(amount = 1) {
     }
 }
 
-spawnFood(300);
+// Função para gerar Buracos Negros (Dão +50 de massa)
+function spawnBlackHoles(amount = 1) {
+    for (let i = 0; i < amount; i++) {
+        blackHoles.push({
+            id: Math.random(),
+            x: Math.random() * MAP_SIZE,
+            y: Math.random() * MAP_SIZE,
+            size: 40 // Tamanho visual do buraco negro
+        });
+    }
+}
 
-console.log(`Servidor de PinoCobrinhas rodando na porta ${PORT}`);
+// Inicialização do mapa
+spawnFood(400);
+spawnBlackHoles(15); // Começa com 15 buracos negros espalhados
+
+console.log(`Servidor de PinoCobrinhas Pro rodando na porta ${PORT}`);
 
 io.on('connection', (socket) => {
-    console.log(`Novo jogador conectado: ${socket.id}`);
+    console.log(`Novo jogador: ${socket.id}`);
 
     socket.on('joinGame', (userData) => {
         players[socket.id] = {
@@ -36,43 +51,52 @@ io.on('connection', (socket) => {
             x: Math.random() * MAP_SIZE,
             y: Math.random() * MAP_SIZE,
             size: 25,
-            color: `hsl(${Math.random() * 360}, 100%, 50%)`
+            color: `hsl(${Math.random() * 360}, 100%, 50%)`,
+            skin: userData.skin || null, // URL da foto ou gif
+            nameColor: userData.nameColor || "white" // Cor personalizada do nome
         };
     });
 
-    // SISTEMA DE MOVIMENTO SUAVE (Calculado no Servidor)
     socket.on('move', (angle) => {
         const p = players[socket.id];
         if (p) {
-            // Velocidade base que diminui conforme o tamanho (massa)
+            // Velocidade diminui conforme a massa aumenta
             const speed = Math.max(1.5, 5 - (p.size / 50));
             
-            // Calcula a nova posição baseada no ângulo enviado pelo mouse
             p.x += Math.cos(angle) * speed;
             p.y += Math.sin(angle) * speed;
 
-            // Impede o jogador de sair das bordas do mapa
+            // Limites do mapa
             p.x = Math.max(0, Math.min(MAP_SIZE, p.x));
             p.y = Math.max(0, Math.min(MAP_SIZE, p.y));
             
-            // --- Lógica de Colisões dentro do processamento de movimento ---
+            // --- COLISÕES ---
             
-            // Colisão com Comida
+            // 1. Colisão com Comida Comum
             for (let i = foods.length - 1; i >= 0; i--) {
                 let f = foods[i];
-                let dist = Math.hypot(p.x - f.x, p.y - f.y);
-                if (dist < p.size) {
+                if (Math.hypot(p.x - f.x, p.y - f.y) < p.size) {
                     p.size += 0.2;
                     foods.splice(i, 1);
                     spawnFood(1);
                 }
             }
 
-            // Colisão com outros Jogadores
+            // 2. Colisão com Buraco Negro (+50 de massa)
+            for (let i = blackHoles.length - 1; i >= 0; i--) {
+                let bh = blackHoles[i];
+                if (Math.hypot(p.x - bh.x, p.y - bh.y) < p.size + 10) {
+                    p.size += 50; 
+                    blackHoles.splice(i, 1);
+                    // Renasce o buraco negro em outro lugar após 5 segundos
+                    setTimeout(() => spawnBlackHoles(1), 5000);
+                }
+            }
+
+            // 3. Colisão com outros Jogadores (Comer)
             Object.values(players).forEach(enemy => {
                 if (enemy.id !== socket.id) {
                     let dist = Math.hypot(p.x - enemy.x, p.y - enemy.y);
-                    // Regra: ser 10% maior para comer o outro
                     if (dist < p.size && p.size > enemy.size * 1.1) {
                         p.size += enemy.size * 0.5;
                         io.to(enemy.id).emit('die');
@@ -84,12 +108,15 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        console.log(`Jogador saiu: ${socket.id}`);
         delete players[socket.id];
     });
 });
 
-// Envia o estado do jogo para todos os jogadores (33 vezes por segundo)
+// Envio de dados (tick) aumentado para 20ms para maior fluidez
 setInterval(() => {
-    io.emit('tick', { players, foods });
-}, 30);
+    io.emit('tick', { 
+        players, 
+        foods, 
+        blackHoles 
+    });
+}, 20);
